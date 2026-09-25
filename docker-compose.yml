@@ -1,0 +1,17 @@
+services:
+  extractor:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - extractor-cache:/home/extractor/.cache
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  extractor-cache:
+
