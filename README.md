@@ -1,5 +1,10 @@
 # TFR Video Text Extractor
 
+Caption-first transcription plus local video-frame OCR. The API returns spoken
+text in `transcript`/`segments` and visible on-screen text in
+`ocr_text`/`ocr_segments`. OCR runs locally with RapidOCR and does not require a
+paid external service.
+
 Standalone, caption-first video transcription API for TechFusion Report. It is intentionally independent of Cookbook so other TFR systems can reuse it.
 
 ## Processing order

@@ -15,6 +15,13 @@ class TranscriptSegment(BaseModel):
     text: str
 
 
+class OcrSegment(BaseModel):
+    start: float
+    end: float
+    text: str
+    confidence: float
+
+
 class ExtractResponse(BaseModel):
     source_url: str
     platform: str
@@ -26,4 +33,5 @@ class ExtractResponse(BaseModel):
     method: Literal["captions", "whisper"]
     transcript: str
     segments: list[TranscriptSegment]
-
+    ocr_text: str = ""
+    ocr_segments: list[OcrSegment] = Field(default_factory=list)
