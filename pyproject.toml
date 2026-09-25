@@ -7,8 +7,9 @@ dependencies = [
   "fastapi>=0.115,<1",
   "uvicorn[standard]>=0.34,<1",
   "pydantic-settings>=2.7,<3",
-  "yt-dlp>=2025.1.15",
+  "yt-dlp[default,curl-cffi]>=2025.1.15",
   "faster-whisper>=1.1,<2",
+  "rapidocr-onnxruntime>=1.4,<2",
 ]
 
 [project.optional-dependencies]
@@ -24,4 +25,3 @@ packages = ["src/video_text_extractor"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-
