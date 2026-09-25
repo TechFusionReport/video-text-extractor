@@ -36,7 +36,7 @@ jobs:
           missing = [
               field
               for field in required_fields
-              if not re.search(rf"(?m)^\\s*(?:\\*\\*)?{re.escape(field)}:(?:\\*\\*)?\\s*(?!<)\\S+", body)
+              if not re.search(rf"(?m)^\s*(?:\*\*)?{re.escape(field)}:(?:\*\*)?\s*(?!<)\S+", body)
           ]
 
           if missing:
