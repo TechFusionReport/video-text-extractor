@@ -50,6 +50,12 @@ On a successful response, Cookbook should combine `transcript` with the source t
 - Models download on first transcription and persist in the Docker cache volume.
 - Put the service behind Cloudflare Tunnel or another TLS reverse proxy; the container binds to localhost by default.
 - Platform extraction can require updated `yt-dlp` releases as websites change.
+- Requests impersonate an available Chrome target by default. Override or disable
+  this with `YT_DLP_IMPERSONATE_TARGET`; verify targets with
+  `yt-dlp --list-impersonate-targets` inside the image.
+- If YouTube requires sign-in/bot verification, export a Netscape-format cookie
+  file from an authorized account, mount it read-only into the container, and set
+  `YT_DLP_COOKIE_FILE` to its in-container path. Never commit the cookie file.
 - Only process media you are authorized to access and follow the source platform's terms.
 
 ## Provenance
