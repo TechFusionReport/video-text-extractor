@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     whisper_compute_type: str = "int8"
     max_media_seconds: int = 3600
     job_timeout_seconds: int = 1800
+    yt_dlp_impersonate_target: str | None = "chrome"
+    yt_dlp_cookie_file: str | None = None
     ocr_enabled: bool = True
     ocr_frame_interval_seconds: float = 2.0
     ocr_max_frames: int = 180

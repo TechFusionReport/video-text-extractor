@@ -8,6 +8,7 @@ from typing import Any
 
 from faster_whisper import WhisperModel
 from yt_dlp import YoutubeDL
+from yt_dlp.networking.impersonate import ImpersonateTarget
 
 from .config import Settings
 from .models import ExtractResponse, OcrSegment, TranscriptSegment
@@ -39,6 +40,7 @@ class VideoExtractor:
 
     def _metadata(self, url: str, temp_dir: str) -> dict:
         options = {
+            **self._yt_dlp_request_options(),
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
@@ -75,6 +77,7 @@ class VideoExtractor:
     def _download_audio(self, url: str, temp_dir: str) -> Path:
         output = str(Path(temp_dir) / "audio.%(ext)s")
         options = {
+            **self._yt_dlp_request_options(),
             "format": "bestaudio/best",
             "outtmpl": output,
             "quiet": True,
@@ -159,10 +162,10 @@ class VideoExtractor:
             self._ocr = RapidOCR()
         return self._ocr
 
-    @staticmethod
-    def _download_video(url: str, directory: Path) -> Path:
+    def _download_video(self, url: str, directory: Path) -> Path:
         output = str(directory / "ocr-video.%(ext)s")
         options = {
+            **self._yt_dlp_request_options(),
             "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
             "outtmpl": output,
             "quiet": True,
@@ -175,6 +178,18 @@ class VideoExtractor:
         if not candidates:
             raise RuntimeError("Video download did not produce a usable file for OCR")
         return max(candidates, key=lambda path: path.stat().st_size)
+
+    def _yt_dlp_request_options(self) -> dict[str, Any]:
+        """Return request identity/auth options shared by every yt-dlp call."""
+        options: dict[str, Any] = {}
+        if target := self.settings.yt_dlp_impersonate_target:
+            options["impersonate"] = ImpersonateTarget.from_str(target)
+        if cookie_file := self.settings.yt_dlp_cookie_file:
+            path = Path(cookie_file)
+            if not path.is_file():
+                raise ValueError(f"YT_DLP_COOKIE_FILE does not exist: {path}")
+            options["cookiefile"] = str(path)
+        return options
 
     @staticmethod
     def _response(
