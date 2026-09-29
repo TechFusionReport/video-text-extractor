@@ -56,6 +56,10 @@ On a successful response, Cookbook should combine `transcript` with the source t
 - If YouTube requires sign-in/bot verification, export a Netscape-format cookie
   file from an authorized account, mount it read-only into the container, and set
   `YT_DLP_COOKIE_FILE` to its in-container path. Never commit the cookie file.
+- Datacenter IPs are often bot-checked even with impersonation. Set `YT_DLP_PROXY`
+  (e.g. `http://10.10.0.5:8888`, a residential egress reachable over WireGuard) to
+  route every yt-dlp request through it. Extraction fails closed if the proxy is
+  down; it never falls back to a direct connection.
 - Only process media you are authorized to access and follow the source platform's terms.
 
 ## Provenance

@@ -64,3 +64,30 @@ def test_yt_dlp_rejects_missing_cookie_file(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="YT_DLP_COOKIE_FILE does not exist"):
         extractor._yt_dlp_request_options()
+
+
+def test_yt_dlp_requests_use_no_proxy_by_default() -> None:
+    extractor = VideoExtractor(Settings(extractor_api_key="test-secret"))
+
+    assert "proxy" not in extractor._yt_dlp_request_options()
+
+
+def test_yt_dlp_requests_use_configured_proxy() -> None:
+    extractor = VideoExtractor(Settings(
+        extractor_api_key="test-secret",
+        yt_dlp_proxy="http://10.10.0.5:8888",
+    ))
+
+    options = extractor._yt_dlp_request_options()
+    assert options["proxy"] == "http://10.10.0.5:8888"
+    # Proxy is layered on top of impersonation, not a replacement for it.
+    assert options["impersonate"] == ImpersonateTarget(client="chrome")
+
+
+@pytest.mark.parametrize("bad", ["10.10.0.5:8888", "ftp://10.10.0.5:8888", "http://10.10.0.5", "http://user:secret@:8888"])
+def test_yt_dlp_rejects_malformed_proxy(bad: str) -> None:
+    extractor = VideoExtractor(Settings(extractor_api_key="test-secret", yt_dlp_proxy=bad))
+
+    with pytest.raises(ValueError, match="YT_DLP_PROXY must be") as exc:
+        extractor._yt_dlp_request_options()
+    assert "secret" not in str(exc.value)

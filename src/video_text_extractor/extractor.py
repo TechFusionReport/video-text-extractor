@@ -5,6 +5,7 @@ import tempfile
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from faster_whisper import WhisperModel
 from yt_dlp import YoutubeDL
@@ -189,6 +190,8 @@ class VideoExtractor:
             if not path.is_file():
                 raise ValueError(f"YT_DLP_COOKIE_FILE does not exist: {path}")
             options["cookiefile"] = str(path)
+        if proxy := self.settings.yt_dlp_proxy:
+            options["proxy"] = validate_proxy_url(proxy)
         return options
 
     @staticmethod
@@ -214,6 +217,21 @@ class VideoExtractor:
             ocr_text="\n".join(segment.text for segment in ocr_segments),
             ocr_segments=ocr_segments,
         )
+
+
+ALLOWED_PROXY_SCHEMES = {"http", "https", "socks5", "socks5h"}
+
+
+def validate_proxy_url(value: str) -> str:
+    """Reject malformed proxy URLs so a typo can't silently disable the proxy."""
+    parsed = urlsplit(value.strip())
+    if parsed.scheme not in ALLOWED_PROXY_SCHEMES or not parsed.hostname or not parsed.port:
+        # Don't echo the value: it may embed proxy credentials.
+        raise ValueError(
+            "YT_DLP_PROXY must be scheme://host:port with scheme in "
+            + ", ".join(sorted(ALLOWED_PROXY_SCHEMES))
+        )
+    return value.strip()
 
 
 def clean_ocr_text(value: str) -> str:
