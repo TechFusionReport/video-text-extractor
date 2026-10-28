@@ -51,8 +51,12 @@ class VideoExtractor:
 
             method = "captions"
             caption = None if force_transcription else self._read_caption(info, directory)
-            if caption:
+            if caption is not None:
                 segments, detected_language = caption
+                if not segments:
+                    # Captions exist but hold only sound cues ([Music]); Whisper would not
+                    # find a recipe in a silent text-overlay video, so do not pay for it.
+                    warnings.append("captions_only_sound_tags")
             else:
                 self._validate_whisper_duration(info)
                 if not force_transcription:
@@ -129,7 +133,11 @@ class VideoExtractor:
             start = event.get("tStartMs", 0) / 1000
             duration = event.get("dDurationMs", 0) / 1000
             segments.append(TranscriptSegment(start=start, end=start + duration, text=text))
-        return (segments, info.get("language")) if segments else None
+        # A caption file with no events at all is treated as "no captions"; a file whose
+        # events were all sound cues returns an empty list so the caller can warn.
+        if not segments and not payload.get("events"):
+            return None
+        return segments, info.get("language")
 
     def _download_audio(self, url: str, temp_dir: str) -> Path:
         output = str(Path(temp_dir) / "audio.%(ext)s")
