@@ -8,6 +8,8 @@ COPY src ./src
 RUN pip install --no-cache-dir .
 RUN useradd --create-home --uid 10001 extractor
 USER extractor
+# Shown by the authenticated /v1/info endpoint: docker compose build --build-arg GIT_SHA=$(git rev-parse --short HEAD)
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
 EXPOSE 8000
 CMD ["uvicorn", "video_text_extractor.main:app", "--host", "0.0.0.0", "--port", "8000"]
-
