@@ -1,9 +1,9 @@
 # TFR Video Text Extractor
 
-Caption-first transcription plus local video-frame OCR. The API returns spoken
-text in `transcript`/`segments` and visible on-screen text in
-`ocr_text`/`ocr_segments`. OCR runs locally with RapidOCR and does not require a
-paid external service.
+Caption-first transcription plus optional local video-frame OCR. The API returns spoken
+text in `transcript`/`segments`, the uploader's `description`, and (when requested)
+visible on-screen text in `ocr_text`/`ocr_segments`. OCR runs locally with RapidOCR and
+does not require a paid external service.
 
 Standalone, caption-first video transcription API for TechFusion Report. It is intentionally independent of Cookbook so other TFR systems can reuse it.
 
@@ -33,7 +33,14 @@ curl -X POST http://127.0.0.1:8000/v1/extract \
   -d '{"url":"https://www.youtube.com/watch?v=VIDEO_ID"}'
 ```
 
-The response includes `method` (`captions` or `whisper`), `transcript`, timestamped `segments`, detected language, title, author, platform, duration, and source ID.
+The response includes `method` (`captions` or `whisper`), `transcript`, timestamped `segments`, `description`, detected language, title, author, platform, duration, source ID, and `warnings`.
+
+- Sound cues such as `[Music]` and `♪` are stripped from caption text.
+- `description` is the uploader's video description. Recipe videos often carry the full recipe there, so use it first.
+- `warnings` lists degraded steps instead of failing: `no_description`, `transcript_short` (under 30 words, likely a text-overlay video), `no_captions_whisper_fallback`, `ocr_unavailable`, `ocr_skipped_too_long`, `ocr_failed`.
+- OCR is opt-in per request: send `"ocr": true`. It also needs `OCR_ENABLED=true` on the server and is skipped for media longer than `OCR_MAX_MEDIA_SECONDS`. An OCR failure never discards the transcript.
+- `GET /v1/info` (same Bearer auth) reports version, git SHA, limits, and runtime checks (deno, ffmpeg, writable cache dir).
+- Errors: 422 bad input or over a duration limit, 503 + `Retry-After` when all `MAX_CONCURRENT_JOBS` slots stay busy, 504 timeout, 502 unexpected failure (the real error is in the container logs under the returned `ref`).
 
 ## Cookbook integration contract
 
