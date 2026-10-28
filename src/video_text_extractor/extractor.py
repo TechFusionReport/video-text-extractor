@@ -1,7 +1,9 @@
 import json
+import logging
 import re
 import subprocess
 import tempfile
+import threading
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
@@ -15,28 +17,75 @@ from .models import ExtractResponse, OcrSegment, TranscriptSegment
 from .security import validate_public_url
 
 
+logger = logging.getLogger(__name__)
+
+# Auto-caption sound cues such as [Music], [Applause], [laughter]. Letters/spaces only, short,
+# so real bracketed content (e.g. "[1]" or long asides) is left alone. Also music notes.
+SOUND_TAG_RE = re.compile(r"\[[A-Za-z][A-Za-z ]{0,30}\]|[♪♫]+")
+SHORT_TRANSCRIPT_WORDS = 30
+
+
 class VideoExtractor:
     def __init__(self, settings: Settings):
         self.settings = settings
         self._model: WhisperModel | None = None
         self._ocr: Any | None = None
+        # Guards lazy model loads so concurrent jobs do not load Whisper/OCR twice.
+        self._load_lock = threading.Lock()
 
-    def extract(self, url: str, language: str | None, force_transcription: bool) -> ExtractResponse:
+    def extract(
+        self,
+        url: str,
+        language: str | None,
+        force_transcription: bool,
+        ocr: bool = False,
+    ) -> ExtractResponse:
         validate_public_url(url)
+        warnings: list[str] = []
         with tempfile.TemporaryDirectory(prefix="tfr-extract-") as temp_dir:
+            directory = Path(temp_dir)
             info = self._metadata(url, temp_dir)
             self._validate_duration(info)
-            if not force_transcription:
-                caption = self._read_caption(info, Path(temp_dir))
-                if caption:
-                    segments, caption_language = caption
-                    ocr_segments = self._extract_ocr(url, info, Path(temp_dir))
-                    return self._response(url, info, "captions", segments, caption_language, ocr_segments)
+            if not (info.get("description") or "").strip():
+                warnings.append("no_description")
 
-            media_path = self._download_audio(url, temp_dir)
-            segments, detected_language = self._transcribe(media_path, language)
-            ocr_segments = self._extract_ocr(url, info, Path(temp_dir))
-            return self._response(url, info, "whisper", segments, detected_language, ocr_segments)
+            method = "captions"
+            caption = None if force_transcription else self._read_caption(info, directory)
+            if caption:
+                segments, detected_language = caption
+            else:
+                self._validate_whisper_duration(info)
+                if not force_transcription:
+                    warnings.append("no_captions_whisper_fallback")
+                media_path = self._download_audio(url, temp_dir)
+                segments, detected_language = self._transcribe(media_path, language)
+                method = "whisper"
+
+            ocr_segments = self._maybe_extract_ocr(url, info, directory, ocr, warnings)
+            word_count = sum(len(segment.text.split()) for segment in segments)
+            if word_count < SHORT_TRANSCRIPT_WORDS:
+                warnings.append("transcript_short")
+            return self._response(url, info, method, segments, detected_language, ocr_segments, warnings)
+
+    def _maybe_extract_ocr(
+        self, url: str, info: dict, directory: Path, requested: bool, warnings: list[str]
+    ) -> list[OcrSegment]:
+        """Run OCR only when asked for; never let an OCR failure lose the transcript."""
+        if not requested:
+            return []
+        if not self.settings.ocr_enabled:
+            warnings.append("ocr_unavailable")
+            return []
+        duration = float(info.get("duration") or 0)
+        if duration > self.settings.ocr_max_media_seconds:
+            warnings.append("ocr_skipped_too_long")
+            return []
+        try:
+            return self._extract_ocr(url, info, directory)
+        except Exception:
+            logger.exception("OCR failed for %s", info.get("id"))
+            warnings.append("ocr_failed")
+            return []
 
     def _metadata(self, url: str, temp_dir: str) -> dict:
         options = {
@@ -53,6 +102,14 @@ class VideoExtractor:
         with YoutubeDL(options) as ydl:
             return ydl.extract_info(url, download=True)
 
+    def _validate_whisper_duration(self, info: dict) -> None:
+        duration = info.get("duration")
+        if duration and float(duration) > self.settings.whisper_max_media_seconds:
+            raise ValueError(
+                f"No captions available and media exceeds the "
+                f"{self.settings.whisper_max_media_seconds}-second transcription limit"
+            )
+
     def _validate_duration(self, info: dict) -> None:
         duration = info.get("duration")
         if duration and float(duration) > self.settings.max_media_seconds:
@@ -66,8 +123,8 @@ class VideoExtractor:
         payload = json.loads(files[0].read_text(encoding="utf-8"))
         segments: list[TranscriptSegment] = []
         for event in payload.get("events", []):
-            text = "".join(part.get("utf8", "") for part in event.get("segs", [])).strip()
-            if not text or text == "\n":
+            text = clean_caption_text("".join(part.get("utf8", "") for part in event.get("segs", [])))
+            if not text:
                 continue
             start = event.get("tStartMs", 0) / 1000
             duration = event.get("dDurationMs", 0) / 1000
@@ -92,12 +149,13 @@ class VideoExtractor:
         return path
 
     def _transcribe(self, path: Path, language: str | None) -> tuple[list[TranscriptSegment], str | None]:
-        if self._model is None:
-            self._model = WhisperModel(
-                self.settings.whisper_model,
-                device=self.settings.whisper_device,
-                compute_type=self.settings.whisper_compute_type,
-            )
+        with self._load_lock:
+            if self._model is None:
+                self._model = WhisperModel(
+                    self.settings.whisper_model,
+                    device=self.settings.whisper_device,
+                    compute_type=self.settings.whisper_compute_type,
+                )
         generated, info = self._model.transcribe(str(path), language=language, vad_filter=True)
         segments = [
             TranscriptSegment(start=item.start, end=item.end, text=item.text.strip())
@@ -156,11 +214,12 @@ class VideoExtractor:
         return found
 
     def _get_ocr_engine(self) -> Any:
-        if self._ocr is None:
-            from rapidocr_onnxruntime import RapidOCR
+        with self._load_lock:
+            if self._ocr is None:
+                from rapidocr_onnxruntime import RapidOCR
 
-            self._ocr = RapidOCR()
-        return self._ocr
+                self._ocr = RapidOCR()
+            return self._ocr
 
     def _download_video(self, url: str, directory: Path) -> Path:
         output = str(directory / "ocr-video.%(ext)s")
@@ -199,6 +258,7 @@ class VideoExtractor:
         segments: list[TranscriptSegment],
         language: str | None,
         ocr_segments: list[OcrSegment],
+        warnings: list[str] | None = None,
     ) -> ExtractResponse:
         return ExtractResponse(
             source_url=url,
@@ -213,7 +273,14 @@ class VideoExtractor:
             segments=segments,
             ocr_text="\n".join(segment.text for segment in ocr_segments),
             ocr_segments=ocr_segments,
+            description=(info.get("description") or "").strip(),
+            warnings=warnings or [],
         )
+
+
+def clean_caption_text(value: str) -> str:
+    """Strip sound cues ([Music], ♪) and collapse whitespace; empty string means drop the cue."""
+    return re.sub(r"\s+", " ", SOUND_TAG_RE.sub(" ", value)).strip()
 
 
 def clean_ocr_text(value: str) -> str:
