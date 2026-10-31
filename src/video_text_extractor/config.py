@@ -14,13 +14,23 @@ class Settings(BaseSettings):
     job_timeout_seconds: int = 1800
     yt_dlp_impersonate_target: str | None = "chrome"
     yt_dlp_cookie_file: str | None = None
-    # Route every yt-dlp request through this proxy (e.g. a residential egress
-    # over WireGuard). No direct fallback: if the proxy is down, extraction fails.
+    # Route yt-dlp requests through the configured proxy.
+    # No direct fallback if the proxy is unavailable.
     yt_dlp_proxy: str | None = None
-    ocr_enabled: bool = True
+
+    # OCR requires both this switch and ocr=true in the request.
+    ocr_enabled: bool = False
+    ocr_max_media_seconds: int = 600
     ocr_frame_interval_seconds: float = 2.0
     ocr_max_frames: int = 180
     ocr_min_confidence: float = 0.55
+    # Whisper on CPU is slow; cap the media length it will accept (seconds).
+    whisper_max_media_seconds: int = 1800
+    # Simultaneous extraction jobs; extra requests wait, then get 503.
+    max_concurrent_jobs: int = 2
+    queue_timeout_seconds: int = 30
+    # Set at image build time (--build-arg GIT_SHA) so /v1/info shows what is running.
+    git_sha: str = "unknown"
 
 
 @lru_cache
