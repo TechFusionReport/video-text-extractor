@@ -37,10 +37,16 @@ The response includes `method` (`captions` or `whisper`), `transcript`, timestam
 
 - Sound cues such as `[Music]` and `♪` are stripped from caption text.
 - `description` is the uploader's video description. Recipe videos often carry the full recipe there, so use it first.
-- `warnings` lists degraded steps instead of failing: `no_description`, `transcript_short` (under 30 words, likely a text-overlay video), `no_captions_whisper_fallback`, `ocr_unavailable`, `ocr_skipped_too_long`, `ocr_failed`.
+- `warnings` lists degraded steps instead of failing: `no_description`, `transcript_short` (under 30 words, likely a text-overlay video), `no_captions_whisper_fallback`, `subtitles_unavailable` (subtitle download failed; retry without subtitles, then use the duration-limited Whisper fallback), `ocr_unavailable`, `ocr_skipped_too_long`, `ocr_failed`.
 - OCR is opt-in per request: send `"ocr": true`. It also needs `OCR_ENABLED=true` on the server and is skipped for media longer than `OCR_MAX_MEDIA_SECONDS`. An OCR failure never discards the transcript.
 - `GET /v1/info` (same Bearer auth) reports version, git SHA, limits, and runtime checks (deno, ffmpeg, writable cache dir).
 - Errors: 422 bad input or over a duration limit, 503 + `Retry-After` when all `MAX_CONCURRENT_JOBS` slots stay busy, 504 timeout, 502 unexpected failure (the real error is in the container logs under the returned `ref`).
+
+| Warning | Meaning |
+| --- | --- |
+| `subtitles_unavailable` | Subtitle download failed; metadata is retried once without subtitles and transcription uses the existing Whisper duration limit. |
+
+Forced transcription disables both native subtitles and automatic captions in yt-dlp.
 
 ## Cookbook integration contract
 

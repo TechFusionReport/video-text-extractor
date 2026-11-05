@@ -112,7 +112,7 @@ def _caption_extractor(tmp_path: Path, events: list[str], **settings) -> tuple[V
     (tmp_path / "source.en.json3").write_text(json.dumps(payload), encoding="utf-8")
     extractor = VideoExtractor(Settings(extractor_api_key="test-secret", **settings))
     info = {"id": "abc", "title": "T", "duration": 60, "description": "1 cup flour\n2 eggs", "extractor_key": "Youtube"}
-    extractor._metadata = lambda url, temp_dir: info  # type: ignore[method-assign]
+    extractor._metadata = lambda url, temp_dir, **kwargs: info  # type: ignore[method-assign]
     extractor._read_caption = lambda i, d: VideoExtractor._read_caption(i, tmp_path)  # type: ignore[method-assign]
     return extractor, info
 
@@ -185,7 +185,7 @@ def test_ocr_failure_is_non_fatal(monkeypatch, tmp_path: Path) -> None:
 def test_whisper_fallback_respects_duration_limit(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("video_text_extractor.extractor.validate_public_url", lambda url: None)
     extractor = VideoExtractor(Settings(extractor_api_key="test-secret", whisper_max_media_seconds=60))
-    extractor._metadata = lambda url, temp_dir: {"id": "x", "duration": 600}  # type: ignore[method-assign]
+    extractor._metadata = lambda url, temp_dir, **kwargs: {"id": "x", "duration": 600}  # type: ignore[method-assign]
     extractor._read_caption = lambda info, directory: None  # type: ignore[method-assign]
 
     with pytest.raises(ValueError, match="transcription limit"):

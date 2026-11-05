@@ -4,6 +4,7 @@ import re
 import subprocess
 import tempfile
 import threading
+import traceback
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from urllib.parse import urlsplit
 
 from faster_whisper import WhisperModel
 from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError
 from yt_dlp.networking.impersonate import ImpersonateTarget
 
 from .config import Settings
@@ -45,7 +47,16 @@ class VideoExtractor:
         warnings: list[str] = []
         with tempfile.TemporaryDirectory(prefix="tfr-extract-") as temp_dir:
             directory = Path(temp_dir)
-            info = self._metadata(url, temp_dir)
+            try:
+                info = self._metadata(url, temp_dir, subtitles=not force_transcription)
+            except DownloadError as exc:
+                if force_transcription or not _is_subtitle_failure(exc):
+                    raise
+                # Discard partial captions so a failed write cannot bypass Whisper.
+                for caption_file in directory.glob("source*.json3*"):
+                    caption_file.unlink()
+                info = self._metadata(url, temp_dir, subtitles=False)
+                warnings.append("subtitles_unavailable")
             self._validate_duration(info)
             if not (info.get("description") or "").strip():
                 warnings.append("no_description")
@@ -88,18 +99,18 @@ class VideoExtractor:
         try:
             return self._extract_ocr(url, info, directory)
         except Exception:
-            logger.exception("OCR failed for %s", info.get("id"))
+            logger.error("OCR failed\n%s", redact_userinfo(traceback.format_exc()))
             warnings.append("ocr_failed")
             return []
 
-    def _metadata(self, url: str, temp_dir: str) -> dict:
+    def _metadata(self, url: str, temp_dir: str, subtitles: bool = True) -> dict:
         options = {
             **self._yt_dlp_request_options(),
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
-            "writesubtitles": True,
-            "writeautomaticsub": True,
+            "writesubtitles": subtitles,
+            "writeautomaticsub": subtitles,
             "subtitlesformat": "json3",
             "subtitleslangs": ["en", "en-orig"],
             "outtmpl": str(Path(temp_dir) / "source.%(ext)s"),
@@ -249,7 +260,7 @@ class VideoExtractor:
 
     def _yt_dlp_request_options(self) -> dict[str, Any]:
         """Return request identity/auth options shared by every yt-dlp call."""
-        options: dict[str, Any] = {}
+        options: dict[str, Any] = {"logger": _SafeYdlLogger()}
         if target := self.settings.yt_dlp_impersonate_target:
             options["impersonate"] = ImpersonateTarget.from_str(target)
         if cookie_file := self.settings.yt_dlp_cookie_file:
@@ -272,7 +283,7 @@ class VideoExtractor:
         warnings: list[str] | None = None,
     ) -> ExtractResponse:
         return ExtractResponse(
-            source_url=url,
+            source_url=redact_userinfo(url),
             platform=info.get("extractor_key") or info.get("extractor") or "unknown",
             source_id=info.get("id"),
             title=info.get("title"),
@@ -326,3 +337,29 @@ def is_duplicate_ocr(text: str, existing: list[OcrSegment]) -> bool:
         if normalized == previous or SequenceMatcher(None, normalized, previous).ratio() >= 0.9:
             return True
     return False
+
+
+def _is_subtitle_failure(exc: DownloadError) -> bool:
+    # yt-dlp raises DownloadError from report_error inside _write_subtitles.
+    tb = exc.__traceback__
+    while tb is not None:
+        if tb.tb_frame.f_code.co_name == "_write_subtitles":
+            return True
+        tb = tb.tb_next
+    return "unable to download video subtitles" in str(exc).lower()
+
+
+def redact_userinfo(value: str) -> str:
+    return re.sub(r"(https?|socks5h?)://[^/\s]*@", r"\1://[redacted]@", value)
+
+
+class _SafeYdlLogger:
+    def debug(self, message: str) -> None:
+        pass
+
+    def warning(self, message: str) -> None:
+        pass
+
+    def error(self, message: str) -> None:
+        # The API handler logs the exception with its request reference.
+        pass
