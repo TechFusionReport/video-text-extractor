@@ -37,16 +37,47 @@ The response includes `method` (`captions` or `whisper`), `transcript`, timestam
 
 - Sound cues such as `[Music]` and `♪` are stripped from caption text.
 - `description` is the uploader's video description. Recipe videos often carry the full recipe there, so use it first.
-- `warnings` lists degraded steps instead of failing: `no_description`, `transcript_short` (under 30 words, likely a text-overlay video), `no_captions_whisper_fallback`, `subtitles_unavailable` (subtitle download failed; retry without subtitles, then use the duration-limited Whisper fallback), `ocr_unavailable`, `ocr_skipped_too_long`, `ocr_failed`.
+- `warnings` lists degraded steps instead of failing: `no_description`, `transcript_short` (under 30 words, likely a text-overlay video), `no_captions_whisper_fallback`, `subtitles_unavailable` (subtitle download failed or the breaker skipped captions; use the duration-limited Whisper fallback), `ocr_unavailable`, `ocr_skipped_too_long`, `ocr_failed`.
 - OCR is opt-in per request: send `"ocr": true`. It also needs `OCR_ENABLED=true` on the server and is skipped for media longer than `OCR_MAX_MEDIA_SECONDS`. An OCR failure never discards the transcript.
 - `GET /v1/info` (same Bearer auth) reports version, git SHA, limits, and runtime checks (deno, ffmpeg, writable cache dir).
 - Errors: 422 bad input or over a duration limit, 503 + `Retry-After` when all `MAX_CONCURRENT_JOBS` slots stay busy, 504 timeout, 502 unexpected failure (the real error is in the container logs under the returned `ref`).
 
 | Warning | Meaning |
 | --- | --- |
-| `subtitles_unavailable` | Subtitle download failed; metadata is retried once without subtitles and transcription uses the existing Whisper duration limit. |
+| `subtitles_unavailable` | Subtitle download failed or the breaker skipped captions; transcription uses the existing Whisper duration limit. Failures retry metadata once without subtitles; skips start without subtitles. |
 
 Forced transcription disables both native subtitles and automatic captions in yt-dlp.
+
+## Subtitle throttle circuit breaker
+
+`SUBTITLE_BREAKER_SECONDS` is an integer from 0 to 86400, default **1800**
+(30 minutes). Set it to **0** to disable the breaker and retain the single retry
+on every subtitle failure. Only a subtitle HTTP 429 opens the breaker. Other
+subtitle failures keep the existing retry and warning without changing its state.
+
+While open, requests start metadata extraction with both native subtitles and
+auto-captions disabled, return `subtitles_unavailable`, and use the existing
+Whisper duration limit (422 when exceeded). After the window expires, one caller
+atomically claims a 60-second probe lease; callers during that lease skip captions.
+A successful metadata probe closes the breaker, even when no captions exist. A
+429 probe starts the full cooldown again. A non-429 subtitle failure or unrelated
+probe error leaves the lease in place until it expires. Forced transcription
+never reads or changes the breaker.
+
+State is shared by worker threads within each process, protected by a lock and
+measured with a monotonic clock. It resets on restart; separate processes have
+independent state. No extraction results are cached. Only opening and closing
+transitions produce INFO logs, without request identifiers or exception text.
+
+Authenticated `GET /v1/info` adds exactly these fields under `subtitles`:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `breaker_open` | boolean | Requests currently skip captions, including during a probe lease. |
+| `retry_after_seconds` | integer | Remaining cooldown or lease, rounded up; 0 when closed or eligible for a probe. |
+
+Reading this status never claims a probe or changes breaker state. With the
+breaker disabled, status is always false and 0.
 
 ## Cookbook integration contract
 

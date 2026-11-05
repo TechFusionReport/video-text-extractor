@@ -42,5 +42,24 @@ class ExtractResponse(BaseModel):
     # Machine-readable notes about degraded or skipped steps (e.g. ocr_failed).
     warnings: list[str] = Field(
         default_factory=list,
-        description="Degraded steps, including subtitles_unavailable when subtitle download fails",
+        description=(
+            "Degraded steps, including subtitles_unavailable when subtitle download "
+            "fails or the subtitle breaker skips captions"
+        ),
     )
+
+
+class SubtitleBreakerStatus(BaseModel):
+    breaker_open: bool
+    retry_after_seconds: int = Field(ge=0)
+
+
+class InfoResponse(BaseModel):
+    version: str
+    git_sha: str
+    whisper_model: str
+    ocr_enabled: bool
+    limits: dict[str, int]
+    yt_dlp: dict[str, str | bool | None]
+    runtime: dict[str, bool]
+    subtitles: SubtitleBreakerStatus
