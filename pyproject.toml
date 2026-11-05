@@ -9,6 +9,8 @@ dependencies = [
   "pydantic-settings>=2.7,<3",
   "yt-dlp[default,curl-cffi]>=2025.1.15",
   "faster-whisper>=1.1,<2",
+  # PyAV 19 breaks faster-whisper decode_audio (metadata_errors argument).
+  "av>=15,<19",
   "rapidocr-onnxruntime>=1.4,<2",
 ]
 
