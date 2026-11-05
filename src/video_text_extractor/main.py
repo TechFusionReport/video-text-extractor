@@ -3,6 +3,7 @@ import logging
 import os
 import shutil
 import threading
+import traceback
 import uuid
 from functools import lru_cache
 from pathlib import Path
@@ -11,7 +12,7 @@ from urllib.parse import urlparse
 from fastapi import Depends, FastAPI, HTTPException
 
 from .config import Settings, get_settings
-from .extractor import VideoExtractor
+from .extractor import VideoExtractor, redact_userinfo
 from .models import ExtractRequest, ExtractResponse
 from .security import require_api_key
 
@@ -110,10 +111,11 @@ async def extract(request: ExtractRequest) -> ExtractResponse:
     except Exception as exc:
         # The client only gets a generic message plus a reference; the real error stays in the logs.
         reference = uuid.uuid4().hex[:12]
-        logger.exception(
-            "Extraction failed ref=%s host=%s error=%s",
+        logger.error(
+            "Extraction failed ref=%s host=%s error=%s\n%s",
             reference,
             urlparse(str(request.url)).hostname,
             type(exc).__name__,
+            redact_userinfo("".join(traceback.format_exception(exc))),
         )
         raise HTTPException(status_code=502, detail=f"Source extraction failed (ref {reference})") from exc

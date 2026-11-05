@@ -9,7 +9,7 @@ def _extractor(tmp_path: Path, events: list[str]) -> VideoExtractor:
     payload = {"events": [{"tStartMs": i * 1000, "dDurationMs": 1000, "segs": [{"utf8": e}]} for i, e in enumerate(events)]}
     (tmp_path / "source.en.json3").write_text(json.dumps(payload), encoding="utf-8")
     extractor = VideoExtractor(Settings(extractor_api_key="test-secret"))
-    extractor._metadata = lambda url, temp_dir: {"id": "x", "duration": 60, "description": "d"}  # type: ignore[method-assign]
+    extractor._metadata = lambda url, temp_dir, **kwargs: {"id": "x", "duration": 60, "description": "d"}  # type: ignore[method-assign]
     extractor._read_caption = lambda info, directory: VideoExtractor._read_caption(info, tmp_path)  # type: ignore[method-assign]
     extractor._download_audio = lambda *a: (_ for _ in ()).throw(AssertionError("Whisper must not run"))  # type: ignore[method-assign]
     return extractor
