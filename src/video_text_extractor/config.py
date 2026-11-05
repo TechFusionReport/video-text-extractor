@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +18,8 @@ class Settings(BaseSettings):
     # Route yt-dlp requests through the configured proxy.
     # No direct fallback if the proxy is unavailable.
     yt_dlp_proxy: str | None = None
+
+    subtitle_breaker_seconds: int = Field(default=1800, ge=0, le=86400)
 
     # OCR requires both this switch and ocr=true in the request.
     ocr_enabled: bool = False

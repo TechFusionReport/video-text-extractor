@@ -12,12 +12,14 @@ from urllib.parse import urlsplit
 
 from faster_whisper import WhisperModel
 from yt_dlp import YoutubeDL
-from yt_dlp.utils import DownloadError
+from yt_dlp.networking.exceptions import HTTPError
 from yt_dlp.networking.impersonate import ImpersonateTarget
+from yt_dlp.utils import DownloadError
 
 from .config import Settings
 from .models import ExtractResponse, OcrSegment, TranscriptSegment
 from .security import validate_public_url
+from .subtitle_breaker import subtitle_breaker
 
 
 logger = logging.getLogger(__name__)
@@ -47,22 +49,36 @@ class VideoExtractor:
         warnings: list[str] = []
         with tempfile.TemporaryDirectory(prefix="tfr-extract-") as temp_dir:
             directory = Path(temp_dir)
+            subtitles = not force_transcription
+            probe = None
+            if not force_transcription:
+                subtitles, probe = subtitle_breaker.acquire(self.settings.subtitle_breaker_seconds)
+                if not subtitles:
+                    warnings.append("subtitles_unavailable")
             try:
-                info = self._metadata(url, temp_dir, subtitles=not force_transcription)
+                info = self._metadata(url, temp_dir, subtitles=subtitles)
             except DownloadError as exc:
-                if force_transcription or not _is_subtitle_failure(exc):
+                if not subtitles or not _is_subtitle_failure(exc):
                     raise
+                if _is_http_429(exc):
+                    subtitle_breaker.trip(self.settings.subtitle_breaker_seconds, probe)
                 # Discard partial captions so a failed write cannot bypass Whisper.
                 for caption_file in directory.glob("source*.json3*"):
                     caption_file.unlink()
                 info = self._metadata(url, temp_dir, subtitles=False)
                 warnings.append("subtitles_unavailable")
+            else:
+                if subtitles:
+                    subtitle_breaker.succeeded(probe)
             self._validate_duration(info)
             if not (info.get("description") or "").strip():
                 warnings.append("no_description")
 
             method = "captions"
-            caption = None if force_transcription else self._read_caption(info, directory)
+            caption = (
+                None if force_transcription or "subtitles_unavailable" in warnings
+                else self._read_caption(info, directory)
+            )
             if caption is not None:
                 segments, detected_language = caption
                 if not segments:
@@ -363,3 +379,25 @@ class _SafeYdlLogger:
     def error(self, message: str) -> None:
         # The API handler logs the exception with its request reference.
         pass
+
+
+def _is_http_429(exc: DownloadError) -> bool:
+    """Inspect yt-dlp's saved exc_info plus Python exception links, cycle-safely."""
+    pending: list[BaseException] = [exc]
+    seen: set[int] = set()
+    messages: list[str] = []
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, HTTPError) and current.status == 429:
+            return True
+        messages.append(str(current).lower())
+        saved = getattr(current, "exc_info", None)
+        if isinstance(saved, tuple) and len(saved) > 1 and isinstance(saved[1], BaseException):
+            pending.append(saved[1])
+        for linked in (current.__cause__, current.__context__):
+            if linked is not None:
+                pending.append(linked)
+    return any("429" in message or "too many requests" in message for message in messages)

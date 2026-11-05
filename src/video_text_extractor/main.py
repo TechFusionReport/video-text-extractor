@@ -13,8 +13,9 @@ from fastapi import Depends, FastAPI, HTTPException
 
 from .config import Settings, get_settings
 from .extractor import VideoExtractor, redact_userinfo
-from .models import ExtractRequest, ExtractResponse
+from .models import ExtractRequest, ExtractResponse, InfoResponse
 from .security import require_api_key
+from .subtitle_breaker import subtitle_breaker
 
 logger = logging.getLogger("video_text_extractor")
 
@@ -61,7 +62,7 @@ def _cache_writable() -> bool:
     return cache.is_dir() and os.access(cache, os.W_OK)
 
 
-@app.get("/v1/info", dependencies=[Depends(require_api_key)])
+@app.get("/v1/info", response_model=InfoResponse, dependencies=[Depends(require_api_key)])
 def info() -> dict:
     """Authenticated runtime facts, so a deploy can be verified without shell access."""
     settings: Settings = get_settings()
@@ -82,6 +83,7 @@ def info() -> dict:
             "impersonate_target": settings.yt_dlp_impersonate_target,
             "cookie_file_configured": bool(settings.yt_dlp_cookie_file),
         },
+        "subtitles": subtitle_breaker.status(settings.subtitle_breaker_seconds),
         "runtime": {
             "deno": shutil.which("deno") is not None,
             "ffmpeg": shutil.which("ffmpeg") is not None,
