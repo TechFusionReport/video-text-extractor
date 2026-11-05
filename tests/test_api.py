@@ -66,6 +66,33 @@ def test_yt_dlp_rejects_missing_cookie_file(tmp_path: Path) -> None:
         extractor._yt_dlp_request_options()
 
 
+def test_yt_dlp_requests_use_no_proxy_by_default() -> None:
+    extractor = VideoExtractor(Settings(extractor_api_key="test-secret"))
+
+    assert "proxy" not in extractor._yt_dlp_request_options()
+
+
+def test_yt_dlp_requests_use_configured_proxy() -> None:
+    extractor = VideoExtractor(Settings(
+        extractor_api_key="test-secret",
+        yt_dlp_proxy="http://10.10.0.5:8888",
+    ))
+
+    options = extractor._yt_dlp_request_options()
+    assert options["proxy"] == "http://10.10.0.5:8888"
+    # Proxy is layered on top of impersonation, not a replacement for it.
+    assert options["impersonate"] == ImpersonateTarget(client="chrome")
+
+
+@pytest.mark.parametrize("bad", ["10.10.0.5:8888", "ftp://10.10.0.5:8888", "http://10.10.0.5", "http://user:secret@:8888"])
+def test_yt_dlp_rejects_malformed_proxy(bad: str) -> None:
+    extractor = VideoExtractor(Settings(extractor_api_key="test-secret", yt_dlp_proxy=bad))
+
+    with pytest.raises(ValueError, match="YT_DLP_PROXY must be") as exc:
+        extractor._yt_dlp_request_options()
+    assert "secret" not in str(exc.value)
+
+
 # --- description, sound tags, warnings, opt-in OCR, limits, observability ---
 
 import json  # noqa: E402
@@ -208,3 +235,49 @@ def test_busy_extractor_returns_503_with_retry_after(monkeypatch) -> None:
 
     assert response.status_code == 503
     assert response.headers["retry-after"] == "1"
+
+
+def test_failed_proxy_does_not_retry_direct(monkeypatch, tmp_path: Path) -> None:
+    """A failed proxy must propagate the error, never retry without the proxy."""
+    from video_text_extractor import extractor as extractor_module
+
+    calls = []
+
+    class FailingYoutubeDL:
+        def __init__(self, options):
+            calls.append(options.copy())
+            assert options.get("proxy") == "http://10.10.0.5:8888"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, *args, **kwargs):
+            raise ConnectionError("proxy unavailable")
+
+    monkeypatch.setattr(extractor_module, "YoutubeDL", FailingYoutubeDL)
+    extractor = VideoExtractor(Settings(extractor_api_key="test-secret", yt_dlp_proxy="http://10.10.0.5:8888"))
+    with pytest.raises(ConnectionError, match="proxy unavailable"):
+        extractor._metadata("https://example.com/video", str(tmp_path))
+    assert len(calls) == 1, "A second yt-dlp attempt could bypass the failed proxy"
+
+
+def test_ocr_disabled_with_no_environment_setting(monkeypatch) -> None:
+    monkeypatch.delenv("OCR_ENABLED", raising=False)
+    monkeypatch.delenv("OCR_MAX_MEDIA_SECONDS", raising=False)
+    settings = Settings(extractor_api_key="test-secret", _env_file=None)
+    assert settings.ocr_enabled is False
+    extractor = VideoExtractor(settings)
+    warnings = []
+    assert extractor._maybe_extract_ocr("https://example.com/video", {"duration": 60}, Path("/tmp"), True, warnings) == []
+    assert warnings == ["ocr_unavailable"]
+    warnings = []
+    assert extractor._maybe_extract_ocr("https://example.com/video", {"duration": 60}, Path("/tmp"), False, warnings) == []
+    assert warnings == []
+
+
+def test_info_rejects_invalid_token() -> None:
+    response = client.get("/v1/info", headers={"Authorization": "Bearer wrong"})
+    assert response.status_code in (401, 403)

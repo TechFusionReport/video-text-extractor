@@ -14,9 +14,12 @@ class Settings(BaseSettings):
     job_timeout_seconds: int = 1800
     yt_dlp_impersonate_target: str | None = "chrome"
     yt_dlp_cookie_file: str | None = None
-    # Master switch: OCR only runs when this is true AND the request sets ocr=true.
+    # Route yt-dlp requests through the configured proxy.
+    # No direct fallback if the proxy is unavailable.
+    yt_dlp_proxy: str | None = None
+
+    # OCR requires both this switch and ocr=true in the request.
     ocr_enabled: bool = False
-    # OCR downloads the whole video; refuse it on long media (seconds).
     ocr_max_media_seconds: int = 600
     ocr_frame_interval_seconds: float = 2.0
     ocr_max_frames: int = 180
