@@ -26,6 +26,10 @@ class OcrSegment(BaseModel):
 
 class ExtractResponse(BaseModel):
     source_url: str
+    resolved_url: str | None = Field(
+        default=None,
+        description="URL used for extraction; TikTok short links resolve to a canonical video URL",
+    )
     platform: str
     source_id: str | None = None
     title: str | None = None

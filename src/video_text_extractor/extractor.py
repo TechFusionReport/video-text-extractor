@@ -18,6 +18,7 @@ from yt_dlp.networking.impersonate import ImpersonateTarget
 from .config import Settings
 from .models import ExtractResponse, OcrSegment, TranscriptSegment
 from .security import validate_public_url
+from .tiktok import canonical_tiktok_url, is_tiktok_short_url, resolve_tiktok_short_url
 
 
 logger = logging.getLogger(__name__)
@@ -44,18 +45,21 @@ class VideoExtractor:
         ocr: bool = False,
     ) -> ExtractResponse:
         validate_public_url(url)
+        media_url = canonical_tiktok_url(url) or url
+        if is_tiktok_short_url(url):
+            media_url = resolve_tiktok_short_url(url, self._yt_dlp_request_options())
         warnings: list[str] = []
         with tempfile.TemporaryDirectory(prefix="tfr-extract-") as temp_dir:
             directory = Path(temp_dir)
             try:
-                info = self._metadata(url, temp_dir, subtitles=not force_transcription)
+                info = self._metadata(media_url, temp_dir, subtitles=not force_transcription)
             except DownloadError as exc:
                 if force_transcription or not _is_subtitle_failure(exc):
                     raise
                 # Discard partial captions so a failed write cannot bypass Whisper.
                 for caption_file in directory.glob("source*.json3*"):
                     caption_file.unlink()
-                info = self._metadata(url, temp_dir, subtitles=False)
+                info = self._metadata(media_url, temp_dir, subtitles=False)
                 warnings.append("subtitles_unavailable")
             self._validate_duration(info)
             if not (info.get("description") or "").strip():
@@ -73,15 +77,18 @@ class VideoExtractor:
                 self._validate_whisper_duration(info)
                 if not force_transcription:
                     warnings.append("no_captions_whisper_fallback")
-                media_path = self._download_audio(url, temp_dir)
+                media_path = self._download_audio(media_url, temp_dir)
                 segments, detected_language = self._transcribe(media_path, language)
                 method = "whisper"
 
-            ocr_segments = self._maybe_extract_ocr(url, info, directory, ocr, warnings)
+            ocr_segments = self._maybe_extract_ocr(media_url, info, directory, ocr, warnings)
             word_count = sum(len(segment.text.split()) for segment in segments)
             if word_count < SHORT_TRANSCRIPT_WORDS:
                 warnings.append("transcript_short")
-            return self._response(url, info, method, segments, detected_language, ocr_segments, warnings)
+            return self._response(
+                url, info, method, segments, detected_language, ocr_segments, warnings,
+                resolved_url=media_url,
+            )
 
     def _maybe_extract_ocr(
         self, url: str, info: dict, directory: Path, requested: bool, warnings: list[str]
@@ -281,9 +288,11 @@ class VideoExtractor:
         language: str | None,
         ocr_segments: list[OcrSegment],
         warnings: list[str] | None = None,
+        resolved_url: str | None = None,
     ) -> ExtractResponse:
         return ExtractResponse(
             source_url=redact_userinfo(url),
+            resolved_url=redact_userinfo(resolved_url or url),
             platform=info.get("extractor_key") or info.get("extractor") or "unknown",
             source_id=info.get("id"),
             title=info.get("title"),
