@@ -78,3 +78,31 @@ On a successful response, Cookbook should combine `transcript` with the source t
 ## Provenance
 
 The architecture is informed by the Apache-2.0 licensed AI Video Transcriber project. This implementation is an independent, minimal API using `yt-dlp` and Faster-Whisper; it does not copy that project's user interface or application code.
+
+## TikTok short links
+
+TikTok `/t/`, `vm`, and `vt` share links are resolved before metadata, audio,
+or OCR downloads. Resolution uses the configured `YT_DLP_PROXY` and cookie file
+(if configured), with automatic redirects and environment proxy discovery
+disabled. Each hop must stay on an allowed public TikTok HTTPS host. There are
+at most six resolver requests, with a 20-second timeout per request. No proxy
+means the resolver refuses to fetch; a proxy failure never retries directly.
+
+`source_url` retains the submitted link. The additive `resolved_url` response
+field contains the URL used for extraction, with TikTok videos normalized to
+`https://www.tiktok.com/@user/video/<id>` and tracking parameters removed.
+Consumers can prefer `resolved_url` when saving the source and retain
+`source_url` for provenance. No Cookbook site changes are included here.
+
+If TikTok redirects a short link to its homepage or another non-video landing
+page, the API returns 422 with `TikTok short link could not be resolved` and
+does not invoke yt-dlp. HTTP 403 and 429 produce explicit denial errors. A
+homepage redirect alone does not prove expiry or blocking, so the error does
+not assert either. An unavailable short-link mapping cannot be reconstructed
+without a valid canonical URL. Canonical video URLs require no resolver request.
+
+Thumbnail fields are intentionally unchanged. A separate change could add
+optional `thumbnail_url` and/or `thumbnails` fields to `ExtractResponse`, map
+yt-dlp's metadata in `_response`, document the fields, and test missing/multiple
+images. The current API omits those fields even when yt-dlp supplies them. Such
+CDN URLs are signed and expire; exposing them would not make them durable.
